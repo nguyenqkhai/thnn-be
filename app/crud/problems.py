@@ -5,6 +5,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.models.problems import Problem, TestCase
 from app.schemas.problems import ProblemCreate, ProblemUpdate, TestCaseCreate
+import uuid
 
 def get_by_id(db: Session, id: str) -> Optional[Problem]:
     return db.query(Problem).filter(Problem.id == id).first()
@@ -81,8 +82,19 @@ def delete(db: Session, *, id: str) -> Problem:
 # Test Cases CRUD
 
 def create_test_case(db: Session, *, obj_in: TestCaseCreate, problem_id: str) -> TestCase:
-    obj_in_data = obj_in.model_dump()
-    db_obj = TestCase(**obj_in_data, problem_id=problem_id)
+    """
+    Tạo test case mới cho bài tập
+    """
+    obj_in_data = obj_in.dict()
+    # Tạo id mới cho test case nếu chưa có
+    test_case_id = str(uuid.uuid4())
+    
+    db_obj = TestCase(
+        id=test_case_id,  # Thêm id vào đây
+        problem_id=problem_id,
+        **obj_in_data
+    )
+    
     db.add(db_obj)
     db.commit()
     db.refresh(db_obj)

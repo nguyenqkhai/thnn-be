@@ -42,6 +42,7 @@ def create_problem(
 ) -> Any:
     """
     Create new problem.
+    Only admin can create problems.
     """
     # Only admin can create problems
     if not current_user.is_admin:
@@ -50,7 +51,29 @@ def create_problem(
             detail="Only admins can create problems",
         )
     
+    # Tạo bài tập mới
     problem = crud.problems.create(db, obj_in=problem_in, created_by=current_user.id)
+    
+    # Tự động tạo test case mẫu từ example input/output
+    if problem and problem_in.example_input and problem_in.example_output:
+        try:
+            # Tạo test case mẫu
+            import uuid  # Thêm import uuid
+            
+            sample_test_case = schemas.TestCaseCreate(
+                input=problem_in.example_input,
+                expected_output=problem_in.example_output,
+                is_sample=True,
+                order=1
+            )
+            
+            # Thêm test case vào bài tập
+            crud.problems.create_test_case(db, obj_in=sample_test_case, problem_id=problem.id)
+        except Exception as e:
+            # Log lỗi nhưng không ảnh hưởng đến việc tạo bài tập
+            print(f"Lỗi khi tạo test case mẫu: {str(e)}")
+            # Có thể ghi log chi tiết hơn ở đây
+    
     return problem
 
 @router.get("/{problem_id}", response_model=schemas.ProblemWithTestCases)
