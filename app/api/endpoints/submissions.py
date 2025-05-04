@@ -1,4 +1,4 @@
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict
 from datetime import datetime
 import logging
 
@@ -12,7 +12,6 @@ from app.models.languages import Language
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
 
 @router.post("/test", response_model=schemas.SubmissionTestResult)
 async def test_submission(
@@ -114,14 +113,55 @@ def read_submissions(
     # Enhance submissions with additional details
     result = []
     for sub in submissions:
-        details = schemas.SubmissionWithDetails(
-            **{key: getattr(sub, key) for key in schemas.Submission.__annotations__.keys()},
-            problem_title=sub.problem.title if sub.problem else None,
-            username=sub.user.username if sub.user else None
-        )
-        result.append(details)
+        # Khởi tạo dictionary với giá trị mặc định cho status
+        submission_data = {
+            "status": "pending"  # Giá trị mặc định cho status
+        }
+        
+        # Lấy các thuộc tính cơ bản từ submission
+        for key in ["id", "user_id", "problem_id", "contest_id", "code", 
+                   "language", "execution_time_ms", "memory_used_kb", 
+                   "submitted_at"]:
+            if hasattr(sub, key):
+                submission_data[key] = getattr(sub, key)
+        
+        # Đặc biệt kiểm tra status để đảm bảo nó có giá trị hợp lệ
+        if hasattr(sub, "status") and getattr(sub, "status"):
+            submission_data["status"] = getattr(sub, "status")
+        
+        # Thêm các thông tin bổ sung
+        submission_data["problem_title"] = sub.problem.title if sub.problem else None
+        submission_data["username"] = sub.user.username if sub.user else None
+        
+        try:
+            # Tạo đối tượng SubmissionWithDetails
+            details = schemas.SubmissionWithDetails(**submission_data)
+            result.append(details)
+        except Exception as e:
+            logger.error(f"Error creating SubmissionWithDetails: {e}")
+            # Skip invalid submissions instead of failing the whole request
+            continue
     
     return result
+
+@router.get("/solved-problems", response_model=Dict[str, List[str]])
+def get_user_solved_problems(
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Lấy danh sách các bài toán mà người dùng đã giải thành công.
+    """
+    # Tìm tất cả các submissions thành công của user hiện tại
+    solved_submissions = db.query(models.Submission).filter(
+        models.Submission.user_id == current_user.id,
+        models.Submission.status == "accepted"
+    ).all()
+    
+    # Lấy danh sách các problem_id không trùng lặp
+    solved_problem_ids = list(set([sub.problem_id for sub in solved_submissions]))
+    
+    return {"solved_problems": solved_problem_ids}
 
 @router.post("/", response_model=schemas.Submission)
 def create_submission(
@@ -199,10 +239,6 @@ def create_submission(
         )
         submission = crud.submissions.update(db, db_obj=submission, obj_in=update_data)
         
-        # Thêm thông tin về kết quả test vào thuộc tính details
-        if hasattr(submission, 'details'):
-            submission.details = judge_result.get("details", None)
-        
         # If this is a contest submission and it's accepted, update user's score
         if submission.contest_id and submission.status == "accepted":
             # Find contest problem points
@@ -227,16 +263,6 @@ def create_submission(
             memory_used_kb=0
         )
         submission = crud.submissions.update(db, db_obj=submission, obj_in=update_data)
-        
-        # Thêm thông tin lỗi
-        if hasattr(submission, 'details'):
-            submission.details = {
-                "total_test_cases": 0,
-                "passed_test_cases": 0,
-                "failed_test_cases": 0,
-                "test_results": [],
-                "error": str(e)
-            }
     
     return submission
 
@@ -294,3 +320,98 @@ def delete_submission(
     crud.submissions.remove(db, id=submission_id)
     
     return {"message": "Submission deleted successfully"}
+
+@router.get("/", response_model=List[schemas.SubmissionWithDetails])
+def read_submissions(
+    db: Session = Depends(deps.get_db),
+    skip: int = 0,
+    limit: int = 100,
+    problem_id: Optional[str] = None,
+    contest_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # Thêm tham số này
+    status: Optional[str] = Query(None, enum=[
+        "pending", "accepted", "wrong_answer", "time_limit_exceeded",
+        "memory_limit_exceeded", "runtime_error", "compilation_error"
+    ]),
+    language: Optional[str] = Query(None, enum=["c", "cpp", "python", "pascal"]),
+    current_user: models.User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Retrieve submissions.
+    """
+    # Normal users can only see their own submissions OR submissions they're allowed to see
+    if not current_user.is_admin:
+        # Nếu user_id được chỉ định và khác với current_user.id, kiểm tra quyền
+        if user_id and user_id != current_user.id:
+            # Chỉ cho phép xem submission của người khác trong các trường hợp được cho phép
+            # Ví dụ: cuộc thi, bài tập nhóm, etc.
+            # Ở đây mặc định không cho phép
+            raise HTTPException(
+                status_code=403,
+                detail="Bạn không có quyền xem bài nộp của người khác"
+            )
+        
+        # Nếu không chỉ định user_id hoặc user_id là của người dùng hiện tại
+        user_id_to_filter = current_user.id  # Luôn lọc theo ID người dùng hiện tại
+        
+        submissions = crud.submissions.get_multi(
+            db, skip=skip, limit=limit, user_id=user_id_to_filter, 
+            problem_id=problem_id, contest_id=contest_id,
+            status=status, language=language
+        )
+    else:
+        # Admins có thể xem tất cả hoặc lọc theo user_id cụ thể nếu được chỉ định
+        submissions = crud.submissions.get_multi(
+            db, skip=skip, limit=limit, user_id=user_id,
+            problem_id=problem_id, contest_id=contest_id,
+            status=status, language=language
+        )
+    
+@router.get("/", response_model=List[schemas.SubmissionWithDetails])
+def read_submissions(
+    db: Session = Depends(deps.get_db),
+    skip: int = 0,
+    limit: int = 100,
+    problem_id: Optional[str] = None,
+    contest_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # Add this parameter
+    status: Optional[str] = Query(None, enum=[
+        "pending", "accepted", "wrong_answer", "time_limit_exceeded",
+        "memory_limit_exceeded", "runtime_error", "compilation_error"
+    ]),
+    language: Optional[str] = Query(None, enum=["c", "cpp", "python", "pascal"]),
+    current_user: models.User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Retrieve submissions.
+    """
+    # If user_id parameter is explicitly provided, use it for filtering
+    # (will be used when selecting "Chỉ bài nộp của tôi")
+    if user_id:
+        # For security, regular users can only see their own submissions
+        # Admins can see any user's submissions if specified
+        if not current_user.is_admin and user_id != current_user.id:
+            # Non-admin trying to see someone else's submissions - restrict to their own
+            user_id = current_user.id
+    elif not current_user.is_admin:
+        # No user_id specified and not an admin - restrict to own submissions
+        user_id = current_user.id
+    
+    # Use the possibly modified user_id in the query
+    submissions = crud.submissions.get_multi(
+        db, skip=skip, limit=limit, user_id=user_id, 
+        problem_id=problem_id, contest_id=contest_id,
+        status=status, language=language
+    )
+    
+    # Enhance submissions with additional details
+    result = []
+    for sub in submissions:
+        details = schemas.SubmissionWithDetails(
+            **{key: getattr(sub, key) for key in schemas.Submission.__annotations__.keys()},
+            problem_title=sub.problem.title if sub.problem else None,
+            username=sub.user.username if sub.user else None
+        )
+        result.append(details)
+    
+    return result
