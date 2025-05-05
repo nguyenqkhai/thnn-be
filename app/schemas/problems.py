@@ -8,19 +8,33 @@ class TestCaseBase(BaseModel):
     expected_output: str
     is_sample: bool = False
     order: int
+    time_limit_ms: Optional[int] = None
+    memory_limit_kb: Optional[int] = None
+    is_hidden: Optional[bool] = False
+    score: Optional[int] = None
 
 class TestCaseCreate(TestCaseBase):
     pass
 
-class TestCaseUpdate(TestCaseBase):
-    pass
+class TestCaseUpdate(BaseModel):
+    input: Optional[str] = None
+    expected_output: Optional[str] = None
+    is_sample: Optional[bool] = None
+    order: Optional[int] = None
+    time_limit_ms: Optional[int] = None
+    memory_limit_kb: Optional[int] = None
+    is_hidden: Optional[bool] = None
+    score: Optional[int] = None
+    
+    class Config:
+        from_attributes = True
 
 class TestCaseInDBBase(TestCaseBase):
     id: str
     problem_id: str
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class TestCase(TestCaseInDBBase):
     pass
@@ -67,10 +81,10 @@ class ProblemInDBBase(ProblemBase):
     created_by: Optional[str] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class Problem(ProblemInDBBase):
-    test_cases: Optional[List[TestCase]] = []
+    pass
 
 class ProblemWithTestCases(Problem):
     test_cases: List[TestCase] = []
