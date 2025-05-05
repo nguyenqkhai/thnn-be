@@ -102,7 +102,7 @@ def delete_user(
     user = crud.users.get_by_id(db, id=user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    deleted_user = crud.users.remove(db, id=user_id)
+    deleted_user = crud.users.delete(db, id=user_id)
     return deleted_user
 
 @router.post("/", response_model=schemas.User)

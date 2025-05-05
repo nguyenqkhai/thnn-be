@@ -62,6 +62,11 @@ def update(
 
 def delete(db: Session, *, id: str) -> User:
     obj = db.query(User).get(id)
+    if not obj:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with id {id} not found"
+        )
     db.delete(obj)
     db.commit()
     return obj
