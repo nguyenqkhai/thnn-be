@@ -4,7 +4,8 @@ from sqlalchemy import and_, or_, func
 from sqlalchemy.orm import Session, joinedload
 from fastapi.encoders import jsonable_encoder
 
-from app.models.contests import Contest, ContestProblem, ContestParticipant
+from app import models  # Thêm dòng này để import models
+from app.models.contests import Contest, ContestProblem, ContestParticipant, RegistrationRequest  # Thêm RegistrationRequest vào đây
 from app.schemas.contests import ContestCreate, ContestUpdate
 
 def get_by_id(db: Session, id: str) -> Optional[Contest]:
@@ -152,3 +153,21 @@ def update_score(db: Session, *, contest_id: str, user_id: str, score: int) -> C
         db.refresh(participant)
     
     return participant
+
+def get_registration_request(db: Session, contest_id: str, user_id: str):
+    """
+    Lấy thông tin yêu cầu đăng ký của người dùng cho cuộc thi.
+    """
+    return db.query(RegistrationRequest).filter(  # Sử dụng RegistrationRequest trực tiếp
+        RegistrationRequest.contest_id == contest_id,
+        RegistrationRequest.user_id == user_id
+    ).first()
+
+def get_participant(db: Session, contest_id: str, user_id: str):
+    """
+    Kiểm tra xem người dùng đã là thành viên của cuộc thi chưa.
+    """
+    return db.query(ContestParticipant).filter(  # Sử dụng ContestParticipant trực tiếp
+        ContestParticipant.contest_id == contest_id,
+        ContestParticipant.user_id == user_id
+    ).first()

@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 import uuid
 from datetime import datetime
+# Xóa dòng: from app.schemas.contests import ContestProblemDetail, RegistrationStatusResponse
 
 class Contest(Base):
     __tablename__ = "contests"
@@ -46,3 +47,16 @@ class ContestParticipant(Base):
 
     contest = relationship("Contest", back_populates="participants")
     user = relationship("User", back_populates="participations")
+
+
+class RegistrationRequest(Base):
+    __tablename__ = "registration_requests"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    contest_id = Column(String(36), ForeignKey("contests.id", ondelete="CASCADE"), nullable=False)
+    requested_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(20), default="pending")  # pending, approved, rejected
+
+    user = relationship("User")
+    contest = relationship("Contest")

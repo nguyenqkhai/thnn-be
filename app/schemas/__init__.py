@@ -1,6 +1,6 @@
 from app.schemas.users import User, UserCreate, UserUpdate, Token, TokenPayload
 from app.schemas.problems import Problem, ProblemCreate, ProblemUpdate, TestCase as ProblemTestCase, TestCaseCreate as ProblemTestCaseCreate, ProblemWithTestCases
-from app.schemas.contests import Contest, ContestCreate, ContestUpdate, ContestProblem, ContestParticipant, ContestDetail
+from app.schemas.contests import Contest, ContestCreate, ContestUpdate, ContestDetail, ContestProblemDetail, RegistrationStatusResponse, ContestProblem, ContestParticipant  # Thêm ContestParticipant vào đây
 from app.schemas.submissions import (
     Submission, SubmissionCreate, SubmissionUpdate, SubmissionWithDetails, SubmissionTestInput, SubmissionTestResult
 )

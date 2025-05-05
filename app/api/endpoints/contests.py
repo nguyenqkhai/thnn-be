@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
 from app.api import deps
+from app.schemas.contests import ContestProblemDetail, RegistrationStatusResponse
 
 router = APIRouter()
 
@@ -81,10 +82,32 @@ def read_contest(
     # Get participant count
     participants = crud.contests.get_participants(db, contest_id=contest_id)
     
-    # Create response with participant count
+    # Tạo danh sách ContestProblemDetail từ contest.problems
+    problem_details = []
+    for prob in contest.problems:
+        # Lấy thông tin chi tiết về problem
+        problem_detail = crud.problems.get_by_id(db, id=prob.problem_id)
+        problem_details.append(schemas.ContestProblemDetail(
+            id=prob.id,
+            contest_id=prob.contest_id,
+            problem_id=prob.problem_id,
+            order=prob.order,
+            points=prob.points,
+            problem=problem_detail
+        ))
+    
+    # Tạo response với đầy đủ các trường yêu cầu
     response = schemas.ContestDetail(
-        **{key: getattr(contest, key) for key in schemas.Contest.__annotations__.keys()},
-        problems=contest.problems,
+        id=contest.id,
+        title=contest.title,
+        description=contest.description,
+        start_time=contest.start_time,
+        end_time=contest.end_time,
+        is_public=contest.is_public,
+        created_by=contest.created_by,
+        created_at=contest.created_at,
+        problems=problem_details,
+        participants=participants,
         participants_count=len(participants)
     )
     
@@ -257,3 +280,42 @@ def get_contest_participants(
     
     participants = crud.contests.get_participants(db, contest_id=contest_id)
     return participants
+
+@router.get("/{contest_id}/requests/user", response_model=RegistrationStatusResponse)
+def get_user_registration_status(
+    *,
+    db: Session = Depends(deps.get_db),
+    contest_id: str = Path(...),
+    current_user: models.User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Kiểm tra trạng thái đăng ký của người dùng hiện tại cho cuộc thi.
+    """
+    # Kiểm tra cuộc thi có tồn tại không
+    contest = crud.contests.get_by_id(db, id=contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=404,
+            detail="Contest not found",
+        )
+    
+    # Kiểm tra xem người dùng đã đăng ký chưa
+    registration = crud.contests.get_registration_request(
+        db, contest_id=contest_id, user_id=current_user.id
+    )
+    
+    # Kiểm tra xem người dùng đã là participant chưa
+    participant = crud.contests.get_participant(
+        db, contest_id=contest_id, user_id=current_user.id
+    )
+    
+    # Xác định trạng thái
+    status = "none"  # Mặc định là chưa đăng ký
+    
+    if participant:
+        status = "approved"  # Đã là thành viên
+    elif registration:
+        status = registration.status  # pending hoặc rejected
+    
+    return schemas.RegistrationStatusResponse(status=status)
+

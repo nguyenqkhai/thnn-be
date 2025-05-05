@@ -2,6 +2,7 @@ from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from app.schemas.problems import Problem
+# Xóa dòng: from app.schemas.contests import RegistrationStatusResponse
 
 # ContestProblem schemas
 class ContestProblemBase(BaseModel):
@@ -20,7 +21,7 @@ class ContestProblemInDBBase(ContestProblemBase):
     contest_id: str
     
     class Config:
-        orm_mode = True
+        from_attributes = True  # Cập nhật từ orm_mode
 
 class ContestProblem(ContestProblemInDBBase):
     pass
@@ -45,7 +46,7 @@ class ContestParticipantInDBBase(ContestParticipantBase):
     joined_at: datetime
     
     class Config:
-        orm_mode = True
+        from_attributes = True  # Cập nhật từ orm_mode
 
 class ContestParticipant(ContestParticipantInDBBase):
     pass
@@ -80,11 +81,27 @@ class ContestInDBBase(ContestBase):
     created_at: datetime
     
     class Config:
-        orm_mode = True
+        from_attributes = True  # Cập nhật từ orm_mode
 
 class Contest(ContestInDBBase):
     pass
 
 class ContestDetail(Contest):
+    participants: Optional[List[ContestParticipant]] = []
     problems: Optional[List[ContestProblemDetail]] = []
     participants_count: Optional[int] = 0
+
+
+# Thêm class RegistrationStatusResponse vào cuối file
+class RegistrationStatusResponse(BaseModel):
+    status: str  # none, pending, approved, rejected
+
+class ContestProblem(BaseModel):
+    id: str
+    contest_id: str
+    problem_id: str
+    order: int
+    points: int = 100
+    
+    class Config:
+        from_attributes = True  # Tương đương với orm_mode = True trong Pydantic v1
