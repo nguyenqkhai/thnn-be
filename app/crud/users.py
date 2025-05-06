@@ -1,10 +1,11 @@
 from typing import Any, Dict, Optional, Union, List
-
+from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from fastapi.encoders import jsonable_encoder
 
 from app.core.security import get_password_hash, verify_password
 from app.models.users import User
+from app.models.submissions import Submission  # Import model Submission
 from app.schemas.users import UserCreate, UserUpdate
 
 def get_by_id(db: Session, id: str) -> Optional[User]:
@@ -61,6 +62,10 @@ def update(
     return db_obj
 
 def delete(db: Session, *, id: str) -> User:
+    # Xóa tất cả submissions của user trước
+    db.query(Submission).filter(Submission.user_id == id).delete()
+    
+    # Sau đó xóa user
     obj = db.query(User).get(id)
     if not obj:
         raise HTTPException(
