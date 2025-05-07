@@ -24,7 +24,8 @@ from app.crud import problems as problems_crud
 logger = logging.getLogger(__name__)
 
 # Cấu hình đường dẫn trình biên dịch
-CPP_COMPILER_PATH = "C:\\UTE\\mingw64\\bin\\g++.exe"
+# Sử dụng biến môi trường hoặc đường dẫn mặc định
+CPP_COMPILER_PATH = os.environ.get("CPP_COMPILER_PATH", "g++")
 PYTHON_INTERPRETER = "python"
 
 def get_language_config(db: Session, language_identifier: str):
@@ -496,7 +497,8 @@ async def test_code(
         language = db.query(Language).filter(Language.id == language_id).first()
         if not language:
             return {
-                "error": "Ngôn ngữ không tồn tại"
+                "error": "Ngôn ngữ không tồn tại",
+                "error_type": "configuration_error"
             }
         
         # Chuẩn bị code file
@@ -507,7 +509,8 @@ async def test_code(
             compile_result = compile_code(code_info, language)
             if not compile_result["success"]:
                 return {
-                    "error": compile_result["message"]
+                    "error": compile_result["message"],
+                    "error_type": "compilation_error"
                 }
         
         # Chạy code với input
@@ -526,12 +529,28 @@ async def test_code(
             }
         # Nếu có lỗi, trả về thông báo lỗi
         else:
+            # Xác định loại lỗi
+            error_type = "runtime_error"
+            if "thời gian" in run_result.get("message", "").lower():
+                error_type = "time_limit_exceeded"
+            elif "bộ nhớ" in run_result.get("message", "").lower():
+                error_type = "memory_limit_exceeded"
+                
             return {
-                "error": run_result["message"]
+                "error": run_result["message"],
+                "error_type": error_type
             }
         
     except Exception as e:
         logger.error(f"Error testing code: {str(e)}")
+        error_type = "system_error"
+        error_message = str(e)
+        
+        # Phát hiện lỗi cú pháp Python
+        if "SyntaxError" in type(e).__name__:
+            error_type = "compilation_error"
+        
         return {
-            "error": str(e)
+            "error": error_message,
+            "error_type": error_type
         }

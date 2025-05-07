@@ -60,7 +60,7 @@ class SubmissionTestInput(BaseModel):
     problem_id: str
     code: str
     language: Literal['c', 'cpp', 'python', 'pascal']
-    input: str
+    input: Optional[str] = ""
 
 class SubmissionTestResult(BaseModel):
     output: str

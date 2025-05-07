@@ -2,7 +2,7 @@ from typing import Any, List, Optional, Dict
 from datetime import datetime
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from sqlalchemy.orm import Session
 
 from app import crud, models, schemas
@@ -24,7 +24,7 @@ async def test_submission(
     """
     try:
         # Kiểm tra dữ liệu đầu vào
-        if not test_data.code or not test_data.problem_id or not test_data.language or not test_data.input:
+        if not test_data.code or not test_data.problem_id or not test_data.language:
             raise HTTPException(
                 status_code=400, 
                 detail="Thiếu thông tin bắt buộc"
@@ -70,14 +70,30 @@ async def test_submission(
             db=db
         )
         
+        # Đảm bảo kết quả trả về luôn có trường output theo yêu cầu của schema
+        if "error" in test_result and "output" not in test_result:
+            # Nếu có lỗi và không có output, thêm trường output rỗng
+            test_result["output"] = ""
+            
+            # Xác định status dựa trên error_type
+            error_type = test_result.get("error_type", "error")
+            test_result["status"] = error_type
+            
+            # Hiển thị lỗi cụ thể trong message
+            test_result["message"] = test_result.get("error", "Lỗi không xác định")
+        
         return test_result
         
     except Exception as e:
         logger.error(f"Error testing submission: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Có lỗi xảy ra khi test code: {str(e)}"
-        )
+        # Trả về đối tượng với trường output rỗng thay vì ném ra HTTPException
+        error_message = str(e)
+        error_type = type(e).__name__
+        return {
+            "output": "",
+            "status": "error",
+            "message": f"Lỗi {error_type}: {error_message}"
+        }
 
 @router.get("/", response_model=List[schemas.SubmissionWithDetails])
 def read_submissions(
@@ -86,31 +102,46 @@ def read_submissions(
     limit: int = 100,
     problem_id: Optional[str] = None,
     contest_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    view_mode: Optional[str] = Query(None, enum=["all", "mine"]),
     status: Optional[str] = Query(None, enum=[
         "pending", "accepted", "wrong_answer", "time_limit_exceeded",
         "memory_limit_exceeded", "runtime_error", "compilation_error"
     ]),
-    language: Optional[str] = Query(None, enum=["c", "cpp", "python", "pascal"]),
+    language: Optional[str] = Query(None, enum=["cpp", "python"]),
     current_user: models.User = Depends(deps.get_current_active_user),
+    response: Response = None,  # Thêm tham số response
 ) -> Any:
     """
     Retrieve submissions.
     """
-    # Normal users can only see their own submissions
-    if not current_user.is_admin:
-        submissions = crud.submissions.get_multi(
-            db, skip=skip, limit=limit, user_id=current_user.id, 
-            problem_id=problem_id, contest_id=contest_id,
-            status=status, language=language
-        )
-    else:
-        # Admins can see all submissions
-        submissions = crud.submissions.get_multi(
-            db, skip=skip, limit=limit, problem_id=problem_id, 
-            contest_id=contest_id, status=status, language=language
-        )
+    # Xử lý view_mode
+    if view_mode == 'mine' or (not current_user.is_admin and not user_id):
+        user_id = current_user.id
+    elif not current_user.is_admin and user_id and user_id != current_user.id:
+        # Người dùng thông thường không thể xem submission của người khác
+        user_id = current_user.id
+
+    # Sử dụng user_id (đã được xử lý) trong truy vấn
+    submissions = crud.submissions.get_multi(
+        db, skip=skip, limit=limit, user_id=user_id, 
+        problem_id=problem_id, contest_id=contest_id,
+        status=status, language=language,
+        view_mode=view_mode, current_user_id=current_user.id
+    )
     
-    # Enhance submissions with additional details
+    # Tính toán tổng số kết quả để gửi x-total-count header
+    total_count = crud.submissions.count(
+        db, user_id=user_id, problem_id=problem_id,
+        contest_id=contest_id, status=status, language=language,
+        view_mode=view_mode, current_user_id=current_user.id
+    )
+    
+    # Thêm header vào response
+    if response:
+        response.headers["X-Total-Count"] = str(total_count)
+    
+    # Bổ sung thông tin chi tiết cho mỗi submission
     result = []
     for sub in submissions:
         # Khởi tạo dictionary với giá trị mặc định cho status
@@ -171,101 +202,137 @@ def create_submission(
     current_user: models.User = Depends(deps.get_current_active_user),
 ) -> Any:
     """
-    Create new submission.
+    Tạo bài nộp mới.
     """
-    # Check if problem exists
-    problem = db.query(models.Problem).filter(models.Problem.id == submission_in.problem_id).first()
-    if not problem:
-        raise HTTPException(
-            status_code=404,
-            detail="Problem not found",
-        )
-    
-    # Kiểm tra nếu problem là private và user không phải admin hoặc người tạo
-    if not problem.is_public and not current_user.is_admin and problem.created_by != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Bạn không có quyền truy cập bài toán này"
-        )
-    
-    # If submission is for a contest, validate
-    if submission_in.contest_id:
-        contest = crud.contests.get_by_id(db, id=submission_in.contest_id)
-        if not contest:
+    try:
+        # Kiểm tra bài toán tồn tại
+        problem = db.query(models.Problem).filter(models.Problem.id == submission_in.problem_id).first()
+        if not problem:
             raise HTTPException(
                 status_code=404,
-                detail="Contest not found",
+                detail="Không tìm thấy bài toán này",
             )
         
-        # Check if user is registered for the contest
-        participants = crud.contests.get_participants(db, contest_id=submission_in.contest_id)
-        is_participant = any(p.user_id == current_user.id for p in participants)
-        if not is_participant:
+        # Kiểm tra quyền truy cập bài toán nếu là private
+        if not problem.is_public and not current_user.is_admin and problem.created_by != current_user.id:
             raise HTTPException(
                 status_code=403,
-                detail="You are not registered for this contest",
+                detail="Bạn không có quyền truy cập bài toán này"
             )
         
-        # Check if contest is active
-        now = datetime.utcnow()
-        if now < contest.start_time or now > contest.end_time:
+        # Kiểm tra ngôn ngữ lập trình hỗ trợ
+        language = db.query(models.Language).filter(
+            models.Language.identifier == submission_in.language,
+            models.Language.is_active == True
+        ).first()
+        
+        if not language:
             raise HTTPException(
-                status_code=400,
-                detail="Contest is not active",
+                status_code=400, 
+                detail="Ngôn ngữ lập trình không được hỗ trợ"
             )
         
-        # Check if problem is part of the contest
-        contest_problems = [cp.problem_id for cp in contest.problems]
-        if submission_in.problem_id not in contest_problems:
-            raise HTTPException(
-                status_code=400,
-                detail="This problem is not part of the contest",
-            )
-    
-    # Create submission
-    submission = crud.submissions.create(db, obj_in=submission_in, user_id=current_user.id)
-    
-    # In a real system, we would send this submission to a judging queue
-    # For now, we'll simulate judging synchronously
-    try:
-        # Judge the submission
-        judge_result = judge.judge_submission(db, submission)
-        
-        # Update submission with judge result
-        update_data = schemas.SubmissionUpdate(
-            status=judge_result["status"],
-            execution_time_ms=judge_result["execution_time_ms"],
-            memory_used_kb=judge_result["memory_used_kb"]
-        )
-        submission = crud.submissions.update(db, db_obj=submission, obj_in=update_data)
-        
-        # If this is a contest submission and it's accepted, update user's score
-        if submission.contest_id and submission.status == "accepted":
-            # Find contest problem points
-            contest_problem = next(
-                (cp for cp in contest.problems if cp.problem_id == submission.problem_id), 
-                None
-            )
-            if contest_problem:
-                # Update participant's score
-                crud.contests.update_score(
-                    db, 
-                    contest_id=submission.contest_id, 
-                    user_id=current_user.id,
-                    score=contest_problem.points
+        # Nếu bài nộp cho cuộc thi, kiểm tra hợp lệ
+        if submission_in.contest_id:
+            contest = crud.contests.get_by_id(db, id=submission_in.contest_id)
+            if not contest:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Không tìm thấy cuộc thi",
                 )
+            
+            # Kiểm tra người dùng đã đăng ký cuộc thi
+            participants = crud.contests.get_participants(db, contest_id=submission_in.contest_id)
+            is_participant = any(p.user_id == current_user.id for p in participants)
+            if not is_participant:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Bạn chưa đăng ký tham gia cuộc thi này",
+                )
+            
+            # Kiểm tra cuộc thi đang diễn ra
+            now = datetime.utcnow()
+            if now < contest.start_time:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cuộc thi chưa bắt đầu",
+                )
+            if now > contest.end_time:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cuộc thi đã kết thúc",
+                )
+            
+            # Kiểm tra bài toán thuộc cuộc thi
+            contest_problems = [cp.problem_id for cp in contest.problems]
+            if submission_in.problem_id not in contest_problems:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bài toán này không thuộc cuộc thi",
+                )
+        
+        # Tạo bài nộp
+        submission = crud.submissions.create(db, obj_in=submission_in, user_id=current_user.id)
+        
+        # Chấm bài nộp
+        try:
+            judge_result = judge.judge_submission(db, submission)
+            
+            # Cập nhật kết quả chấm
+            update_data = schemas.SubmissionUpdate(
+                status=judge_result["status"],
+                execution_time_ms=judge_result["execution_time_ms"],
+                memory_used_kb=judge_result["memory_used_kb"],
+                details=judge_result.get("details", None)  # Thêm chi tiết kết quả
+            )
+            submission = crud.submissions.update(db, db_obj=submission, obj_in=update_data)
+            
+            # Nếu là bài nộp cuộc thi và được chấp nhận, cập nhật điểm
+            if submission.contest_id and submission.status == "accepted":
+                # Tìm điểm bài toán
+                contest_problem = next(
+                    (cp for cp in contest.problems if cp.problem_id == submission.problem_id), 
+                    None
+                )
+                if contest_problem:
+                    # Cập nhật điểm người tham gia
+                    crud.contests.update_score(
+                        db, 
+                        contest_id=submission.contest_id, 
+                        user_id=current_user.id,
+                        score=contest_problem.points
+                    )
+        except Exception as e:
+            logger.error(f"Lỗi khi chấm bài nộp: {str(e)}")
+            # Ghi lại thông tin lỗi chi tiết
+            error_details = {
+                "error_message": str(e),
+                "error_type": type(e).__name__,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            # Cập nhật trạng thái lỗi và chi tiết
+            update_data = schemas.SubmissionUpdate(
+                status="runtime_error",
+                execution_time_ms=0,
+                memory_used_kb=0,
+                details={"error": str(e), "error_details": error_details}
+            )
+            submission = crud.submissions.update(db, db_obj=submission, obj_in=update_data)
+        
+        return submission
+        
+    except HTTPException as he:
+        # Chuyển tiếp HTTP exceptions
+        raise he
     except Exception as e:
-        logger.error(f"Error judging submission: {str(e)}")
-        # In case of error in judging, mark as runtime error
-        update_data = schemas.SubmissionUpdate(
-            status="runtime_error",
-            execution_time_ms=0,
-            memory_used_kb=0
+        # Xử lý lỗi chung
+        logger.error(f"Lỗi không xác định khi tạo bài nộp: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Có lỗi xảy ra khi xử lý bài nộp: {str(e)}"
         )
-        submission = crud.submissions.update(db, db_obj=submission, obj_in=update_data)
-    
-    return submission
-
+        
 @router.get("/{submission_id}", response_model=schemas.Submission)
 def read_submission(
     *,
@@ -276,6 +343,13 @@ def read_submission(
     """
     Get submission by ID.
     """
+    # Kiểm tra submission_id có hợp lệ không
+    if not submission_id or submission_id == "undefined":
+        raise HTTPException(
+            status_code=400,
+            detail="ID bài nộp không hợp lệ",
+        )
+        
     submission = crud.submissions.get_by_id(db, id=submission_id)
     if not submission:
         raise HTTPException(
@@ -320,98 +394,3 @@ def delete_submission(
     crud.submissions.remove(db, id=submission_id)
     
     return {"message": "Submission deleted successfully"}
-
-@router.get("/", response_model=List[schemas.SubmissionWithDetails])
-def read_submissions(
-    db: Session = Depends(deps.get_db),
-    skip: int = 0,
-    limit: int = 100,
-    problem_id: Optional[str] = None,
-    contest_id: Optional[str] = None,
-    user_id: Optional[str] = None,  # Thêm tham số này
-    status: Optional[str] = Query(None, enum=[
-        "pending", "accepted", "wrong_answer", "time_limit_exceeded",
-        "memory_limit_exceeded", "runtime_error", "compilation_error"
-    ]),
-    language: Optional[str] = Query(None, enum=["c", "cpp", "python", "pascal"]),
-    current_user: models.User = Depends(deps.get_current_active_user),
-) -> Any:
-    """
-    Retrieve submissions.
-    """
-    # Normal users can only see their own submissions OR submissions they're allowed to see
-    if not current_user.is_admin:
-        # Nếu user_id được chỉ định và khác với current_user.id, kiểm tra quyền
-        if user_id and user_id != current_user.id:
-            # Chỉ cho phép xem submission của người khác trong các trường hợp được cho phép
-            # Ví dụ: cuộc thi, bài tập nhóm, etc.
-            # Ở đây mặc định không cho phép
-            raise HTTPException(
-                status_code=403,
-                detail="Bạn không có quyền xem bài nộp của người khác"
-            )
-        
-        # Nếu không chỉ định user_id hoặc user_id là của người dùng hiện tại
-        user_id_to_filter = current_user.id  # Luôn lọc theo ID người dùng hiện tại
-        
-        submissions = crud.submissions.get_multi(
-            db, skip=skip, limit=limit, user_id=user_id_to_filter, 
-            problem_id=problem_id, contest_id=contest_id,
-            status=status, language=language
-        )
-    else:
-        # Admins có thể xem tất cả hoặc lọc theo user_id cụ thể nếu được chỉ định
-        submissions = crud.submissions.get_multi(
-            db, skip=skip, limit=limit, user_id=user_id,
-            problem_id=problem_id, contest_id=contest_id,
-            status=status, language=language
-        )
-    
-@router.get("/", response_model=List[schemas.SubmissionWithDetails])
-def read_submissions(
-    db: Session = Depends(deps.get_db),
-    skip: int = 0,
-    limit: int = 100,
-    problem_id: Optional[str] = None,
-    contest_id: Optional[str] = None,
-    user_id: Optional[str] = None,  # Add this parameter
-    status: Optional[str] = Query(None, enum=[
-        "pending", "accepted", "wrong_answer", "time_limit_exceeded",
-        "memory_limit_exceeded", "runtime_error", "compilation_error"
-    ]),
-    language: Optional[str] = Query(None, enum=["c", "cpp", "python", "pascal"]),
-    current_user: models.User = Depends(deps.get_current_active_user),
-) -> Any:
-    """
-    Retrieve submissions.
-    """
-    # If user_id parameter is explicitly provided, use it for filtering
-    # (will be used when selecting "Chỉ bài nộp của tôi")
-    if user_id:
-        # For security, regular users can only see their own submissions
-        # Admins can see any user's submissions if specified
-        if not current_user.is_admin and user_id != current_user.id:
-            # Non-admin trying to see someone else's submissions - restrict to their own
-            user_id = current_user.id
-    elif not current_user.is_admin:
-        # No user_id specified and not an admin - restrict to own submissions
-        user_id = current_user.id
-    
-    # Use the possibly modified user_id in the query
-    submissions = crud.submissions.get_multi(
-        db, skip=skip, limit=limit, user_id=user_id, 
-        problem_id=problem_id, contest_id=contest_id,
-        status=status, language=language
-    )
-    
-    # Enhance submissions with additional details
-    result = []
-    for sub in submissions:
-        details = schemas.SubmissionWithDetails(
-            **{key: getattr(sub, key) for key in schemas.Submission.__annotations__.keys()},
-            problem_title=sub.problem.title if sub.problem else None,
-            username=sub.user.username if sub.user else None
-        )
-        result.append(details)
-    
-    return result

@@ -171,3 +171,29 @@ def get_participant(db: Session, contest_id: str, user_id: str):
         ContestParticipant.contest_id == contest_id,
         ContestParticipant.user_id == user_id
     ).first()
+
+
+def update_contest_problem(
+    db: Session, *, contest_id: str, problem_id: str, order: Optional[int] = None, points: Optional[int] = None
+) -> Optional[ContestProblem]:
+    """
+    Cập nhật thông tin bài toán trong cuộc thi
+    """
+    contest_problem = db.query(ContestProblem).filter(
+        ContestProblem.contest_id == contest_id,
+        ContestProblem.problem_id == problem_id
+    ).first()
+    
+    if not contest_problem:
+        return None
+    
+    if order is not None:
+        contest_problem.order = order
+    if points is not None:
+        contest_problem.points = points
+    
+    db.add(contest_problem)
+    db.commit()
+    db.refresh(contest_problem)
+    
+    return contest_problem

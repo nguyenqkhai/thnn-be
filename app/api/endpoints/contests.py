@@ -319,3 +319,125 @@ def get_user_registration_status(
     
     return schemas.RegistrationStatusResponse(status=status)
 
+@router.put("/{contest_id}/problems/{problem_id}", response_model=schemas.ContestProblem)
+def update_problem_in_contest(
+    *,
+    db: Session = Depends(deps.get_db),
+    contest_id: str = Path(...),
+    problem_id: str = Path(...),  # Đây là id của bản ghi ContestProblem
+    order: int = Body(None),
+    points: int = Body(None),
+    current_user: models.User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Cập nhật thông tin bài toán trong cuộc thi theo ID của bản ghi ContestProblem.
+    """
+    # Kiểm tra cuộc thi tồn tại
+    contest = crud.contests.get_by_id(db, id=contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy cuộc thi",
+        )
+    
+    # Kiểm tra quyền cập nhật
+    if not current_user.is_admin and contest.created_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Bạn không có quyền cập nhật bài toán trong cuộc thi này",
+        )
+    
+    # Kiểm tra cuộc thi đã bắt đầu chưa
+    now = datetime.utcnow()
+    if now >= contest.start_time:
+        raise HTTPException(
+            status_code=400,
+            detail="Không thể cập nhật cuộc thi đã bắt đầu",
+        )
+    
+    # Tìm bài toán trong cuộc thi theo ID của bản ghi ContestProblem
+    contest_problem = db.query(models.ContestProblem).filter(
+        models.ContestProblem.id == problem_id,
+        models.ContestProblem.contest_id == contest_id
+    ).first()
+    
+    if not contest_problem:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy bài toán trong cuộc thi này",
+        )
+    
+    # Cập nhật thông tin
+    if order is not None:
+        contest_problem.order = order
+    if points is not None:
+        contest_problem.points = points
+    
+    db.add(contest_problem)
+    db.commit()
+    db.refresh(contest_problem)
+    
+    return contest_problem
+
+@router.delete("/{contest_id}/problems/{problem_id}", response_model=schemas.ContestProblem)
+def delete_problem_from_contest(
+    *,
+    db: Session = Depends(deps.get_db),
+    contest_id: str = Path(...),
+    problem_id: str = Path(...),
+    current_user: models.User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Xóa bài toán khỏi cuộc thi.
+    """
+    # Kiểm tra cuộc thi tồn tại
+    contest = crud.contests.get_by_id(db, id=contest_id)
+    if not contest:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy cuộc thi",
+        )
+    
+    # Kiểm tra quyền cập nhật
+    if not current_user.is_admin and contest.created_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Bạn không có quyền xóa bài toán khỏi cuộc thi này",
+        )
+    
+    # Kiểm tra cuộc thi đã bắt đầu chưa
+    now = datetime.utcnow()
+    if now >= contest.start_time:
+        raise HTTPException(
+            status_code=400,
+            detail="Không thể cập nhật cuộc thi đã bắt đầu",
+        )
+    
+    # Tìm bài toán trong cuộc thi
+    # Đầu tiên, thử tìm theo problem_id (trường hợp problem_id là problem_id của bài toán)
+    contest_problem = db.query(models.ContestProblem).filter(
+        models.ContestProblem.contest_id == contest_id,
+        models.ContestProblem.problem_id == problem_id
+    ).first()
+    
+    # Nếu không tìm thấy, thử tìm theo id (trường hợp problem_id là id của bản ghi ContestProblem)
+    if not contest_problem:
+        contest_problem = db.query(models.ContestProblem).filter(
+            models.ContestProblem.contest_id == contest_id,
+            models.ContestProblem.id == problem_id
+        ).first()
+    
+    if not contest_problem:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy bài toán trong cuộc thi này",
+        )
+    
+    # Lưu thông tin bài toán trước khi xóa để trả về
+    result = schemas.ContestProblem.from_orm(contest_problem)
+    
+    # Xóa bài toán khỏi cuộc thi
+    db.delete(contest_problem)
+    db.commit()
+    
+    return result
