@@ -19,16 +19,11 @@ def read_contests(
     search: Optional[str] = None,
     current_user: Optional[models.User] = Depends(deps.get_current_active_user),
 ) -> Any:
-    """
-    Retrieve contests.
-    """
-    # Normal users can only see public contests
     if not current_user.is_admin:
         contests = crud.contests.get_multi(
             db, skip=skip, limit=limit, is_public=True, status=status, search=search
         )
     else:
-        # Admins can see all contests
         contests = crud.contests.get_multi(
             db, skip=skip, limit=limit, status=status, search=search
         )
@@ -42,10 +37,6 @@ def create_contest(
     contest_in: schemas.ContestCreate,
     current_user: models.User = Depends(deps.get_current_active_user),
 ) -> Any:
-    """
-    Create new contest.
-    """
-    # Only admin can create contests
     if not current_user.is_admin:
         raise HTTPException(
             status_code=403,
@@ -281,50 +272,12 @@ def get_contest_participants(
     participants = crud.contests.get_participants(db, contest_id=contest_id)
     return participants
 
-@router.get("/{contest_id}/requests/user", response_model=RegistrationStatusResponse)
-def get_user_registration_status(
-    *,
-    db: Session = Depends(deps.get_db),
-    contest_id: str = Path(...),
-    current_user: models.User = Depends(deps.get_current_active_user),
-) -> Any:
-    """
-    Kiểm tra trạng thái đăng ký của người dùng hiện tại cho cuộc thi.
-    """
-    # Kiểm tra cuộc thi có tồn tại không
-    contest = crud.contests.get_by_id(db, id=contest_id)
-    if not contest:
-        raise HTTPException(
-            status_code=404,
-            detail="Contest not found",
-        )
-    
-    # Kiểm tra xem người dùng đã đăng ký chưa
-    registration = crud.contests.get_registration_request(
-        db, contest_id=contest_id, user_id=current_user.id
-    )
-    
-    # Kiểm tra xem người dùng đã là participant chưa
-    participant = crud.contests.get_participant(
-        db, contest_id=contest_id, user_id=current_user.id
-    )
-    
-    # Xác định trạng thái
-    status = "none"  # Mặc định là chưa đăng ký
-    
-    if participant:
-        status = "approved"  # Đã là thành viên
-    elif registration:
-        status = registration.status  # pending hoặc rejected
-    
-    return schemas.RegistrationStatusResponse(status=status)
-
 @router.put("/{contest_id}/problems/{problem_id}", response_model=schemas.ContestProblem)
 def update_problem_in_contest(
     *,
     db: Session = Depends(deps.get_db),
     contest_id: str = Path(...),
-    problem_id: str = Path(...),  # Đây là id của bản ghi ContestProblem
+    problem_id: str = Path(...),
     order: int = Body(None),
     points: int = Body(None),
     current_user: models.User = Depends(deps.get_current_active_user),

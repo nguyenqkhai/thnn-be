@@ -3,7 +3,6 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 from fastapi.encoders import jsonable_encoder
 
-# Import the models
 from app.models.problems import Problem, TestCase
 from app.models.submissions import Submission
 from app.models.contests import ContestProblem

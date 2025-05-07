@@ -10,10 +10,8 @@ from app.models.users import User
 from app.schemas.users import TokenPayload
 from app.core.config import settings
 
-# OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login")
 
-# Database dependency
 def get_db() -> Generator:
     try:
         db = SessionLocal()
@@ -21,7 +19,6 @@ def get_db() -> Generator:
     finally:
         db.close()
 
-# Get current user dependency
 def get_current_user(
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme)
@@ -46,7 +43,6 @@ def get_current_user(
         )
     return user
 
-# Get current active user
 def get_current_active_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
@@ -57,7 +53,6 @@ def get_current_active_user(
         )
     return current_user
 
-# Get current active superuser
 def get_current_active_admin(
     current_user: User = Depends(get_current_active_user),
 ) -> User:

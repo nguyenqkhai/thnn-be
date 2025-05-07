@@ -13,8 +13,6 @@ import uuid
 import logging
 
 from app.models.submissions import Submission
-# Sửa đổi: Không import SubmissionTestResult từ models nếu nó không tồn tại
-# from app.models.submissions import Submission, SubmissionTestResult
 from app.schemas.submissions import SubmissionTestResult as SubmissionTestResultSchema
 from app.models.problems import Problem, TestCase
 from app.models.languages import Language
@@ -37,7 +35,6 @@ def get_language_config(db: Session, language_identifier: str):
 
 def prepare_code_file(code: str, language_config):
     """Tạo file code tạm thời"""
-    # Tạo thư mục tạm thời
     tmp_dir = tempfile.mkdtemp(prefix="judge_")
     file_name = f"main.{language_config.file_extension}"
     file_path = os.path.join(tmp_dir, file_name)
