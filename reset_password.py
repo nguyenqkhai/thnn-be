@@ -17,7 +17,7 @@ def reset_admin_password():
     # Cập nhật vào database
     with engine.connect() as conn:
         result = conn.execute(
-            text("UPDATE users SET hashed_password = :hashed WHERE username = 'nguyenqkhai'"),
+            text("UPDATE users SET hashed_password = :hashed WHERE username = 'admin'"),
             {"hashed": hashed_str}
         )
         conn.commit()

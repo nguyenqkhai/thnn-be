@@ -50,7 +50,7 @@ class UserInDBBase(UserBase):
     created_at: datetime
     
     class Config:
-        orm_mode = True
+        from_attributes = True  # Thay thế cho orm_mode trong pydantic v2
 
 # Properties to return to client
 class User(UserInDBBase):
